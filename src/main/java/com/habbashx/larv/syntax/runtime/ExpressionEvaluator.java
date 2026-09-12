@@ -1,0 +1,608 @@
+package com.habbashx.larv.syntax.runtime;
+
+import com.habbashx.larv.syntax.error.LarvError;
+import com.habbashx.larv.syntax.parser.ast.expression.*;
+import com.habbashx.larv.syntax.parser.ast.expression.visitor.ExpressionVisitor;
+import com.habbashx.larv.syntax.parser.ast.statement.*;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.*;
+
+/**
+ * Tree-walking evaluator for all {@link Expression} AST nodes.
+ *
+ * <p>{@code ExpressionEvaluator} implements {@link ExpressionVisitor} and is
+ * the single place where expression nodes are turned into runtime values.
+ * It is constructed once per interpreter run and reused for every expression
+ * in the program.</p>
+ *
+ * <h2>Dispatch</h2>
+ * <p>{@link #eval(Expression)} uses an exhaustive {@code switch} expression
+ * over the sealed {@link Expression} hierarchy.  Each arm delegates to a
+ * private {@code visit*} method.  No {@code instanceof} chain or external
+ * visitor registration is needed.</p>
+ *
+ * <h2>Value representation</h2>
+ * <table border="1">
+ *   <tr><th>Larv type</th><th>Java representation</th></tr>
+ *   <tr><td>number</td>   <td>{@link Double}</td></tr>
+ *   <tr><td>string</td>   <td>{@link String}</td></tr>
+ *   <tr><td>boolean</td>  <td>{@link Boolean}</td></tr>
+ *   <tr><td>nil</td>      <td>{@code null}</td></tr>
+ *   <tr><td>array</td>    <td>{@code java.util.ArrayList<Object>}</td></tr>
+ *   <tr><td>object</td>   <td>{@link LarvObject}</td></tr>
+ * </table>
+ *
+ * <h2>Dependencies</h2>
+ * <ul>
+ *   <li>{@link ExecutionContext} — resolves variables, functions, classes, natives.</li>
+ *   <li>{@link FunctionInvoker} — handles function and method call mechanics.</li>
+ *   <li>{@link BinaryOperator}  — applies arithmetic and comparison operators.</li>
+ *   <li>{@link TruthinessEvaluator} — converts values to boolean for conditions.</li>
+ *   <li>{@link ArrayMethods}    — dispatches built-in array dot methods.</li>
+ * </ul>
+ */
+public final class ExpressionEvaluator implements ExpressionVisitor {
+
+    private final ExecutionContext context;
+    private final FunctionInvoker  invoker;
+
+    /**
+     * Creates an evaluator wired to the given context and function invoker.
+     *
+     * @param context the shared runtime state
+     * @param invoker the helper used to invoke user-defined functions and methods
+     */
+    public ExpressionEvaluator(ExecutionContext context, FunctionInvoker invoker) {
+        this.context = context;
+        this.invoker = invoker;
+    }
+
+    /**
+     * Evaluates any expression node and returns its runtime value.
+     *
+     * <p>This is the main entry point.  All recursive evaluation inside visit
+     * methods calls back here.</p>
+     *
+     * @param expr the expression to evaluate (must not be {@code null})
+     * @return the runtime value produced by the expression
+     * @throws LarvError if evaluation fails (type error, undefined variable, etc.)
+     */
+    public Object eval(@NotNull Expression expr) {
+        return switch (expr) {
+            case NumberExpression  e -> visitNumber(e);
+            case StringExpression  e -> visitString(e);
+            case LiteralExpression e -> e.value();
+            case BooleanExpression e -> e.value();
+            case VarExpression     e -> visitVar(e);
+            case UnaryExpression   e -> visitUnary(e);
+            case BinaryExpression  e -> visitBinary(e);
+            case LogicalExpression e -> visitLogical(e);
+            case TernaryExpression e -> visitTernary(e);
+            case CallExpression    e -> visitCall(e);
+            case NewExpression     e -> visitNew(e);
+            case ThisExpression    e -> visitThis(e);
+            case GetExpression     e -> visitGet(e);
+            case SetExpression     e -> visitSet(e);
+            case JavaCallExpression e -> visitJavaCall(e);
+            case ArrayExpression   e -> visitArray(e);
+            case IndexExpression   e -> visitIndex(e);
+            case AssignExpression  e -> visitAssignExpr(e);
+            case AwaitExpression   e -> visitAwait(e);
+            case GroupExpression   e -> visitGroup(e);
+            case NonNullExpression e -> visitNonNull(e);
+            default -> throw new LarvError("Unknown expression type: " + expr.getClass().getSimpleName());
+        };
+    }
+
+    @Override public Object visitNumber(@NotNull NumberExpression e) { return e.value(); }
+    @Override public Object visitString(@NotNull StringExpression e) { return e.value(); }
+
+    /** {@code await expr} — unwraps a {@link java.util.concurrent.Future}; other values pass through. */
+    public Object visitAwait(@NotNull AwaitExpression e) {
+        Object value = eval(e.expression());
+        if (value instanceof java.util.concurrent.Future<?> f) {
+            try { return f.get(); }
+            catch (Exception ex) {
+                Throwable cause = ex.getCause();
+                throw new LarvError(cause != null ? cause.getMessage() : ex.getMessage());
+            }
+        }
+        return value;
+    }
+
+    /** {@code (expr)} — transparently evaluates the wrapped expression. */
+    public Object visitGroup(@NotNull GroupExpression e) { return eval(e.expression()); }
+
+    /** {@code expr!} — returns the operand if non-null, otherwise raises a runtime error. */
+    public Object visitNonNull(@NotNull NonNullExpression e) {
+        Object value = eval(e.expression());
+        if (value == null) throw new LarvError("Non-null assertion failed: value was nil.");
+        return value;
+    }
+
+    /**
+     * Resolves a variable name in the current scope chain.
+     *
+     * @param e the variable reference node
+     * @return the value bound to the variable's name
+     * @throws LarvError if the variable is not declared
+     */
+    @Override public Object visitVar(@NotNull VarExpression e) { return context.getEnvironment().get(e.name()); }
+
+    /**
+     * Evaluates both operands eagerly and applies the binary operator.
+     *
+     * @param e the binary expression node
+     * @return the operation result
+     */
+    @Override
+    public Object visitBinary(@NotNull BinaryExpression e) {
+        if ("is".equals(e.operator())) {
+            String typeName = e.right() instanceof StringExpression(String value) ? value : String.valueOf(eval(e.right()));
+            return isInstance(eval(e.left()), typeName);
+        }
+        Object left  = eval(e.left());
+        Object right = eval(e.right());
+        return BinaryOperator.apply(e.operator(), left, right);
+    }
+
+    /**
+     * Evaluates a unary prefix expression ({@code -expr} or {@code !expr}).
+     *
+     * @param e the unary expression node
+     * @return negated number for {@code -}, inverted boolean for {@code !}
+     * @throws LarvError if the operand has the wrong type
+     */
+    private Object visitUnary(@NotNull UnaryExpression e) {
+        Object operand = eval(e.right());
+        return switch (e.operator()) {
+            case "-" -> {
+                if (operand instanceof Double d)  yield -d;
+                if (operand instanceof Integer i) yield (double) -i;
+                throw new LarvError("Unary '-' requires a number, got: " + typeName(operand));
+            }
+            case "!" -> !TruthinessEvaluator.isTruthy(operand);
+            default -> throw new LarvError("Unknown unary operator: '" + e.operator() + "'");
+        };
+    }
+
+    /**
+     * Short-circuit logical AND / OR.
+     *
+     * <ul>
+     *   <li>{@code ||} — returns left immediately if truthy; otherwise evaluates right.</li>
+     *   <li>{@code &&} — returns left immediately if falsy; otherwise evaluates right.</li>
+     * </ul>
+     *
+     * @param e the logical expression node
+     * @return the short-circuit result
+     */
+    private Object visitLogical(@NotNull LogicalExpression e) {
+        Object left = eval(e.left());
+        if (e.operator().equals("||")) {
+            if (TruthinessEvaluator.isTruthy(left)) return left;
+        } else {
+            if (!TruthinessEvaluator.isTruthy(left)) return left;
+        }
+        return eval(e.right());
+    }
+
+    /**
+     * Evaluates the ternary expression {@code condition ? thenExpr, elseExpr}.
+     * Only the chosen branch is evaluated.
+     *
+     * @param e the ternary expression node
+     * @return the value of the chosen branch
+     */
+    private Object visitTernary(@NotNull TernaryExpression e) {
+        return TruthinessEvaluator.isTruthy(eval(e.condition()))
+                ? eval(e.thenBranch())
+                : eval(e.elseBranch());
+    }
+
+    /**
+     * Dispatches a function or method call.
+     *
+     * <ul>
+     *   <li>{@link VarExpression} caller → plain function call via {@link #callFunction}.</li>
+     *   <li>{@link GetExpression} caller → method call via {@link #callMethod}.</li>
+     * </ul>
+     *
+     * @param e the call expression node
+     * @return the call's return value
+     * @throws LarvError for invalid call targets
+     */
+    @Override
+    public Object visitCall(@NotNull CallExpression e) {
+        List<Object> args = evalAll(e.arguments());
+        return switch (e.caller()) {
+            case VarExpression(String name)              -> callFunction(name, args);
+            case GetExpression(Expression obj, String m) -> callMethod(obj, m, args);
+            default -> throw new LarvError("Invalid call target — expected a function or method");
+        };
+    }
+
+    /**
+     * Constructs a new instance of a user-defined class.
+     *
+     * <p>Steps:
+     * <ol>
+     *   <li>Looks up the class in the registry.</li>
+     *   <li>Creates a fresh {@link LarvObject}.</li>
+     *   <li>Collects method declarations from the class body onto {@code __methods__}.</li>
+     *   <li>Pushes a new scope, binds {@code this}, and calls {@code constructor} if present.</li>
+     * </ol>
+     *
+     * @param e the new-expression node
+     * @return the newly created and initialized {@link LarvObject}
+     * @throws LarvError if the class is not defined
+     */
+    @Override
+    public Object visitNew(@NotNull NewExpression e) {
+        String className = e.className();
+        if (context.isInterface(className))
+            throw new LarvError("Cannot instantiate interface '" + className + "' — interfaces are not constructible");
+        var clazz = context.getClass(className);
+        if (clazz == null) throw new LarvError("Undefined class '" + className + "'");
+
+        LarvObject obj = new LarvObject();
+        // Collect methods, walking the inheritance chain (parent first, child overrides)
+        Map<String, FunctionStatement> methods = collectInheritedMethods(clazz);
+        obj.set("__methods__", methods);
+        obj.set("__class__", className);
+        obj.set("__interfaces__", collectTransitiveInterfaces(clazz));
+        validateInterfaceCompliance(clazz, methods);
+
+        for (Statement s : clazz.body()) {
+            if (s instanceof ConstStatement cs) {
+                obj.set(cs.name(), eval(cs.value()));
+            }
+        }
+
+        FunctionStatement init = methods.get("constructor");
+        if (init != null) invoker.invokeMethod(init, obj, evalAll(e.args()));
+
+        return obj;
+    }
+
+    @Override public Object visitThis(ThisExpression e)            { return context.getEnvironment().get("this"); }
+
+    @Override
+    public Object visitGet(@NotNull GetExpression e) {
+        return requireObject(eval(e.object()), "field access '" + e.field() + "'").getOrThrow(e.field());
+    }
+
+    @Override
+    public Object visitSet(@NotNull SetExpression e) {
+        requireObject(eval(e.object()), "field assignment '" + e.field() + "'").set(e.field(), eval(e.value()));
+        return null;
+    }
+    /**
+     * Resolves and calls a named function.
+     * Checks native registry first, then user-defined functions.
+     *
+     * @param name the function name
+     * @param args evaluated argument list
+     * @return the call's return value
+     * @throws LarvError if the function is not found or arity does not match
+     */
+    private Object callFunction(String name, List<Object> args) {
+        if (context.hasNative(name)) return context.invokeNative(name, args);
+        FunctionStatement fn = context.getFunction(name);
+        if (fn == null) throw new LarvError("Undefined function '" + name + "' — did you define it with 'func'?");
+        if (fn.params().size() != args.size())
+            throw new LarvError("Function '" + name + "' expects " + fn.params().size() +
+                    " argument(s) but got " + args.size());
+        return invoker.invokeFunction(fn, args);
+    }
+
+    /**
+     * Dispatches a method call on an object, module, Java alias, or array.
+     *
+     * <p>Priority:
+     * <ol>
+     *   <li>Java FFI alias ({@code JMath.sqrt(4)})</li>
+     *   <li>Module namespace ({@code Math.add(2,3)})</li>
+     *   <li>Built-in array dot method ({@code arr.push(x)})</li>
+     *   <li>User-defined object method ({@code obj.greet()})</li>
+     * </ol>
+     *
+     * @param objExpr    the receiver expression
+     * @param methodName the method name to dispatch
+     * @param args       evaluated argument list
+     * @return the method's return value
+     */
+    private Object callMethod(Expression objExpr, String methodName, List<Object> args) {
+        if (objExpr instanceof VarExpression(String name) && context.getJavaRegistry().hasAlias(name))
+            return context.getJavaRegistry().invoke(name, methodName, args);
+
+        Object target = eval(objExpr);
+
+        if (target instanceof LarvObject obj && obj.hasField("__module__")) {
+            String moduleName = (String) obj.get("__module__");
+            String qualifiedName = moduleName + "." + methodName;
+            if (context.hasNative(qualifiedName)) return context.invokeNative(qualifiedName, args);
+            FunctionStatement fn = context.getFunction(qualifiedName);
+            if (fn == null) throw new LarvError("Module '" + moduleName + "' has no function '" + methodName + "'");
+            if (fn.params().size() != args.size())
+                throw new LarvError("'" + moduleName + "." + methodName + "' expects " + fn.params().size() + " arg(s) but got " + args.size());
+            return invoker.invokeFunction(fn, args);
+        }
+
+        if (target instanceof List<?> list) {
+            @SuppressWarnings("unchecked")
+            List<Object> array = (List<Object>) list;
+            return ArrayMethods.dispatch(array, methodName, args);
+        }
+
+        if (target != null && !(target instanceof LarvObject)) {
+            return context.getJavaRegistry().invokeOnObject(target, methodName, args);
+        }
+
+        LarvObject obj = requireObject(target, "method call '" + methodName + "'");
+        FunctionStatement fn = getMethods(obj).get(methodName);
+        if (fn == null) throw new LarvError("Undefined method '" + methodName + "' on object");
+        return invoker.invokeMethod(fn, obj, args);
+    }
+
+    /**
+     * Evaluates a list of expressions left-to-right and collects the results.
+     *
+     * @param exprs the expression list to evaluate
+     * @return a new list of evaluated values, in the same order
+     */
+    private @NotNull List<Object> evalAll(@NotNull List<Expression> exprs) {
+        List<Object> values = new ArrayList<>(exprs.size());
+        for (Expression e : exprs) values.add(eval(e));
+        return values;
+    }
+
+    /**
+     * Scans a class body for {@link FunctionStatement} nodes and returns a
+     * map from method name to its declaration.
+     *
+     * @param body the class body statement list
+     * @return map of method name → {@link FunctionStatement}
+     */
+    private @NotNull Map<String, FunctionStatement> collectMethods(@NotNull List<Statement> body) {
+        Map<String, FunctionStatement> methods = new HashMap<>();
+        for (Statement s : body) if (s instanceof FunctionStatement fn) methods.put(fn.name(), fn);
+        return methods;
+    }
+
+    /**
+     * Builds the full method table for a class, walking the inheritance chain.
+     *
+     * <p>Algorithm:
+     * <ol>
+     *   <li>Recursively collect parent methods first.</li>
+     *   <li>Apply child methods on top, respecting {@code core} and {@code override} rules:
+     *     <ul>
+     *       <li>A parent method marked {@code core} cannot be overridden — attempting to
+     *           do so throws a {@link LarvError}.</li>
+     *       <li>Overriding a non-core parent method requires the {@code override} keyword.</li>
+     *       <li>Using {@code override} when no parent method exists is an error.</li>
+     *     </ul>
+     *   </li>
+     * </ol>
+     *
+     * @param clazz the class whose full method table should be built
+     * @return the merged method map
+     */
+    private @NotNull Map<String, FunctionStatement> collectInheritedMethods(@NotNull ClassStatement clazz) {
+        Map<String, FunctionStatement> methods = new HashMap<>();
+
+        if (clazz.superclassName() != null) {
+            ClassStatement parent = context.getClass(clazz.superclassName());
+            if (parent == null)
+                throw new LarvError("Undefined superclass '" + clazz.superclassName() + "' for class '" + clazz.name() + "'");
+            methods.putAll(collectInheritedMethods(parent));
+        }
+
+        for (Statement s : clazz.body()) {
+            if (!(s instanceof FunctionStatement fn)) continue;
+
+            FunctionStatement existing = methods.get(fn.name());
+
+            if (existing != null) {
+                if (existing.isCore()) {
+                    throw new LarvError(
+                            "Cannot override core method '" + fn.name() + "' inherited from superclass — " +
+                                    "'core' methods are sealed and cannot be redefined in subclasses", fn.line());
+                }
+                if (!fn.isOverride()) {
+                    throw new LarvError(
+                            "Method '" + fn.name() + "' overrides a parent method but is missing the 'override' keyword", fn.line());
+                }
+            } else {
+                if (fn.isOverride()) {
+                    throw new LarvError(
+                            "'override' on method '" + fn.name() + "' but no parent method with that name exists", fn.line());
+                }
+            }
+
+            methods.put(fn.name(), fn);
+        }
+
+        return methods;
+    }
+
+    /**
+     * Computes the set of interfaces implemented by {@code clazz}, transitively:
+     * its own declared interfaces, the interfaces of every ancestor class, and
+     * every parent interface of those interfaces.
+     *
+     * @param clazz the class to inspect
+     * @return the transitive interface-name set
+     */
+    private @NotNull Set<String> collectTransitiveInterfaces(@NotNull ClassStatement clazz) {
+        Set<String> result = new HashSet<>();
+        for (ClassStatement cur = clazz; cur != null; cur = parentOf(cur)) {
+            for (String iface : cur.interfaces()) addInterfaceTransitively(iface, result);
+        }
+        return result;
+    }
+
+    /** Returns the parent {@link ClassStatement}, or {@code null} if none. */
+    private ClassStatement parentOf(@NotNull ClassStatement clazz) {
+        return clazz.superclassName() == null ? null : context.getClass(clazz.superclassName());
+    }
+
+    /** Adds {@code iface} and all of its parent interfaces to {@code out}. */
+    private void addInterfaceTransitively(String iface, @NotNull Set<String> out) {
+        if (!out.add(iface)) return;
+        InterfaceStatement decl = context.getInterface(iface);
+        if (decl == null) return;
+        if (decl.superinterfaceName() != null) addInterfaceTransitively(decl.superinterfaceName(), out);
+    }
+
+    /**
+     * Verifies that {@code clazz} (using the already-collected {@code methods})
+     * implements every method declared by its interfaces, transitively.
+     * Unknown interface names and missing methods raise an error.
+     */
+    private void validateInterfaceCompliance(@NotNull ClassStatement clazz, @NotNull Map<String, FunctionStatement> methods) {
+        Set<String> implemented = new HashSet<>();
+        for (FunctionStatement fn : methods.values()) {
+            implemented.add(methodKey(fn.name(), fn.params().size()));
+        }
+        Set<String> required = new HashSet<>();
+        for (String iface : clazz.interfaces()) addRequiredInterfaceMethods(iface, required);
+        for (String key : required) {
+            if (!implemented.contains(key))
+                throw new LarvError("Class '" + clazz.name() + "' does not implement method '" + key + "' required by its interface(s)");
+        }
+    }
+
+    /** Collects {@code name#arity} keys for {@code iface} and its parents. */
+    private void addRequiredInterfaceMethods(String iface, @NotNull Set<String> out) {
+        InterfaceStatement decl = context.getInterface(iface);
+        if (decl == null) throw new LarvError("Undefined interface '" + iface + "'");
+        if (decl.superinterfaceName() != null) addRequiredInterfaceMethods(decl.superinterfaceName(), out);
+        for (FunctionStatement m : decl.methods()) out.add(methodKey(m.name(), m.params().size()));
+    }
+
+    private static @NotNull String methodKey(String name, int arity) {
+        return name + "#" + arity;
+    }
+
+    /**
+     * Implements the {@code is} type-check operator: returns {@code true} when
+     * {@code target} is an instance of the class or interface {@code typeName}
+     * (including subclasses and transitively-implemented interfaces).
+     *
+     * @param target   the value to test
+     * @param typeName the class or interface name
+     * @return {@code true} if the target is an instance of the given type
+     */
+    private boolean isInstance(Object target, String typeName) {
+        if (!(target instanceof LarvObject obj)) return false;
+        Object cls = obj.get("__class__");
+        if (!(cls instanceof String className)) return false;
+        for (ClassStatement cur = context.getClass(className); cur != null; cur = parentOf(cur)) {
+            if (cur.name().equals(typeName)) return true;
+            for (String iface : collectTransitiveInterfaces(cur)) {
+                if (iface.equals(typeName)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Asserts that {@code value} is a {@link LarvObject} and returns it.
+     *
+     * @param value     the runtime value to check
+     * @param operation a description of the attempted operation (for the error message)
+     * @return the value cast to {@link LarvObject}
+     * @throws LarvError if the value is not a {@link LarvObject}
+     */
+    private LarvObject requireObject(Object value, String operation) {
+        if (value instanceof LarvObject lo) return lo;
+        if (value == null) throw new LarvError("Attempted " + operation + " on 'nil' — the value is not an object");
+        throw new LarvError("Attempted " + operation + " on a " + typeName(value) + " — expected an object");
+    }
+
+    /** Returns the method map stored on a {@link LarvObject} under {@code __methods__}. */
+    @SuppressWarnings("unchecked")
+    private Map<String, FunctionStatement> getMethods(@NotNull LarvObject obj) {
+        return (Map<String, FunctionStatement>) obj.get("__methods__");
+    }
+
+    /**
+     * Invokes a Java FFI method via the {@link com.habbashx.larv.syntax.runtime.ffi.JavaClassRegistry}.
+     *
+     * @param e the Java call expression node
+     * @return the return value from the Java method
+     */
+    private Object visitJavaCall(@NotNull JavaCallExpression e) {
+        List<Object> args = evalAll(e.arguments());
+        return context.getJavaRegistry().invoke(e.alias(), e.methodName(), args);
+    }
+
+    /**
+     * Evaluates an array literal by evaluating each element expression in order.
+     *
+     * @param e the array literal expression node
+     * @return a new {@code ArrayList} containing the evaluated elements
+     */
+    private @NotNull Object visitArray(@NotNull ArrayExpression e) {
+        List<Object> list = new ArrayList<>();
+        for (Expression el : e.elements()) list.add(eval(el));
+        return list;
+    }
+
+    /**
+     * Evaluates an array index access ({@code arr[i]}).
+     *
+     * @param e the index expression node
+     * @return the element at the given index
+     * @throws LarvError if the target is not an array, the index is not numeric,
+     *                   or the index is out of bounds
+     */
+    private Object visitIndex(@NotNull IndexExpression e) {
+        Object target = eval(e.array());
+        Object idx    = eval(e.index());
+        if (!(idx instanceof Double))
+            throw new LarvError("Array index must be a number, got: " + typeName(idx));
+        if (target instanceof List<?> list) {
+            int i = ((Double) idx).intValue();
+            if (i < 0 || i >= list.size())
+                throw new LarvError("Index " + i + " is out of bounds — array has " + list.size() + " element(s)");
+            return list.get(i);
+        }
+        if (target == null) throw new LarvError("Cannot index into 'nil'");
+        throw new LarvError("Cannot index into " + typeName(target) + " — expected an array");
+    }
+
+    /**
+     * Evaluates an assignment expression ({@code x = expr}) and returns the
+     * assigned value so the expression can be used inline.
+     *
+     * @param e the assign expression node
+     * @return the value that was assigned
+     */
+    private Object visitAssignExpr(@NotNull AssignExpression e) {
+        Object value = eval(e.value());
+        context.getEnvironment().assign(e.name(), value);
+        return value;
+    }
+
+    /**
+     * Returns a human-readable Larv type name for a runtime value.
+     *
+     * @param v the value (may be {@code null})
+     * @return one of: {@code "nil"}, {@code "number"}, {@code "string"},
+     *         {@code "boolean"}, {@code "array"}, {@code "object"}, or the
+     *         Java class simple name as a fallback
+     */
+    private @NotNull String typeName(Object v) {
+        if (v == null)               return "nil";
+        if (v instanceof Double)     return "number";
+        if (v instanceof String)     return "string";
+        if (v instanceof Boolean)    return "boolean";
+        if (v instanceof List)       return "array";
+        if (v instanceof LarvObject) return "object";
+        return v.getClass().getSimpleName();
+    }
+}

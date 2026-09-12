@@ -1,0 +1,22 @@
+package com.habbashx.larv.syntax.parser.ast.statement;
+
+/**
+ * Sealed root interface for all statement AST nodes in the Larv language.
+ *
+ * <h2>New permitted subtypes</h2>
+ * <ul>
+ *   <li>{@link TryCatchStatement} — {@code try { } catch (e) { } finally { }}</li>
+ *   <li>{@link ThrowStatement}    — {@code throw expr}</li>
+ *   <li>{@link SwitchStatement}   — {@code switch expr { case … default … }}</li>
+ *   <li>{@link EnumStatement}     — {@code enum Name { A, B, C }}</li>
+ * </ul>
+ */
+public sealed interface Statement permits AssignStatement, AtomicStatement, BlockStatement, BreakStatement, ClassStatement, CompoundAssignStatement, ConstStatement, ContinueStatement, DecrementStatement, DeferStatement, EnumStatement, ExprStatement, ForStatement, ForeachStatement, FunctionStatement, IfStatement, ImportStatement, IncrementStatement, IndexAssignStatement, InterfaceStatement, JavaBindStatement, ModuleStatement, PrintStatement, ReturnStatement, SetFieldStatement, SwitchStatement, ThrowStatement, TryCatchStatement, VarStatement, WhileStatement {
+
+    /**
+     * Returns the 1-based source line where this statement begins.
+     *
+     * @return the source line number, or {@code -1} if unknown
+     */
+    int line();
+}

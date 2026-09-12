@@ -1,0 +1,6 @@
+func test(s:string) {
+
+}
+
+test("hello world")
+

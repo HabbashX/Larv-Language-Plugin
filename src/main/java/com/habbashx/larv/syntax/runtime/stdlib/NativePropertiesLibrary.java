@@ -1,0 +1,82 @@
+package com.habbashx.larv.syntax.runtime.stdlib;
+
+import com.habbashx.larv.syntax.error.LarvError;
+import com.habbashx.larv.syntax.runtime.ExecutionContext;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Properties;
+
+@Native("Native Properties Library")
+@Deprecated(since = "1.1.0") // unused by compiler & interpreter
+public class NativePropertiesLibrary extends NativeLibrary {
+
+    private final Properties properties = new Properties();
+
+
+    public NativePropertiesLibrary(ExecutionContext executionContext) {
+        super(executionContext);
+    }
+
+    @Override
+    public void registerAll() {
+       getExecutionContext().registerNative("loadProp",    this::loadProperties);
+       getExecutionContext().registerNative("getProp",     this::getProperty);
+       getExecutionContext().registerNative("setProp",this::setProperty);
+       getExecutionContext().registerNative("saveProp",this::saveProperties);
+       getExecutionContext().registerNative("getAllProps",  this::getAllProperties);
+    }
+
+    private @NotNull String args(@NotNull List<Object> args, int index, String fnName) {
+        if (args.size() <= index || !(args.get(index) instanceof String s))
+            throw new LarvError(fnName + "() expects a string path as argument " + (index + 1), -1, LarvError.Kind.RUNTIME);
+        return s;
+    }
+
+    private @Nullable Object loadProperties(List<Object> args) {
+        final String fileName = args(args, 0, "loadProp");
+        try (final Reader reader = new BufferedReader(new FileReader(fileName), 1024)) {
+            properties.load(reader);
+            return null;
+        } catch (IOException e) {
+            throw new LarvError("loadProp(): cannot read file '" + fileName + "': " + e.getMessage(),
+                    -1, LarvError.Kind.RUNTIME);
+        }
+    }
+
+    private @Nullable Object setProperty(List<Object> args) {
+        final @Nullable String propertyName = args(args,0,"setProp");
+        final @Nullable String propertyValue = args(args,2,"setProp");
+        properties.setProperty(propertyName,propertyValue);
+
+        return null;
+    }
+
+    private @Nullable Object saveProperties(List<Object> args) {
+
+        String fileName = args(args,0,"saveProp");
+
+        try (final Writer writer =  new BufferedWriter(new FileWriter(fileName,true))) {
+
+            properties.store(writer,"");
+            return null;
+        } catch (IOException e) {
+            throw new LarvError("saveProp(): cannot save file '"+fileName+"': "+e.getMessage(),-1,LarvError.Kind.RUNTIME);
+        }
+    }
+
+    private @Nullable Object getProperty(List<Object> args) {
+        return properties.get(args(args, 0, "getProp"));
+    }
+
+    private @NotNull Object getAllProperties(List<Object> args) {
+        LinkedHashMap<String, Object> result = new LinkedHashMap<>();
+        for (String key : properties.stringPropertyNames()) {
+            result.put(key, properties.getProperty(key));
+        }
+        return result;
+    }
+}
