@@ -6,3 +6,4 @@ out/
 local/
 sandbox/
 production/
+.intellijPlatform/
