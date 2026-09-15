@@ -21,12 +21,19 @@ public final class LarvTokenTypes {
     public static final IElementType IMPLEMENTS = t("IMPLEMENTS");
     public static final IElementType IS       = t("IS");
 
-    public static final IElementType TYPE_INT    = t("TYPE_INT");
-    public static final IElementType TYPE_LONG   = t("TYPE_LONG");
-    public static final IElementType TYPE_BOOL   = t("TYPE_BOOL");
-    public static final IElementType TYPE_DOUBLE = t("TYPE_DOUBLE");
-    public static final IElementType TYPE_STRING = t("TYPE_STRING");
-    public static final IElementType TYPE_FLOAT  = t("TYPE_FLOAT");
+    public static final IElementType TYPE_INT      = t("TYPE_INT");
+    public static final IElementType TYPE_LONG     = t("TYPE_LONG");
+    public static final IElementType TYPE_BOOL     = t("TYPE_BOOL");
+    public static final IElementType TYPE_DOUBLE   = t("TYPE_DOUBLE");
+    public static final IElementType TYPE_STRING   = t("TYPE_STRING");
+    public static final IElementType TYPE_FLOAT    = t("TYPE_FLOAT");
+    public static final IElementType TYPE_CHAR     = t("TYPE_CHAR");
+    public static final IElementType TYPE_BYTE     = t("TYPE_BYTE");
+    public static final IElementType TYPE_SHORT    = t("TYPE_SHORT");
+    public static final IElementType TYPE_BIGINT   = t("TYPE_BIGINT");
+    public static final IElementType TYPE_SMALLINT = t("TYPE_SMALLINT");
+    public static final IElementType TYPE_ANY      = t("TYPE_ANY");
+    public static final IElementType TYPE_OBJECT   = t("TYPE_OBJECT");
 
 
     private LarvTokenTypes() {}
@@ -117,7 +124,9 @@ public final class LarvTokenTypes {
             IMPORT, MODULE, AS, TRY, CATCH, FINALLY, THROW,
             SWITCH, CASE, DEFAULT, ENUM, GET, SET,
             OVERRIDE, CORE, SYNC, DEFER, ATOMIC, VOLATILE, ASYNC, AWAIT,
-            INTERFACE, IMPLEMENTS, IS
+            INTERFACE, IMPLEMENTS, IS,
+            TYPE_INT, TYPE_LONG, TYPE_BOOL, TYPE_DOUBLE, TYPE_STRING, TYPE_FLOAT,
+            TYPE_CHAR, TYPE_BYTE, TYPE_SHORT, TYPE_BIGINT, TYPE_SMALLINT, TYPE_ANY, TYPE_OBJECT
     );
 
     public static final TokenSet LITERALS = TokenSet.create(
@@ -136,7 +145,8 @@ public final class LarvTokenTypes {
     public static final TokenSet STRING_LITERALS = TokenSet.create(STRING, RAW_STRING);
     public static final TokenSet COMMENTS_SET    = TokenSet.create(COMMENT);
     public static final TokenSet BUILTIN_TYPES   = TokenSet.create(
-            TYPE_INT, TYPE_LONG, TYPE_BOOL, TYPE_DOUBLE, TYPE_STRING, TYPE_FLOAT);
+            TYPE_INT, TYPE_LONG, TYPE_BOOL, TYPE_DOUBLE, TYPE_STRING, TYPE_FLOAT,
+            TYPE_CHAR, TYPE_BYTE, TYPE_SHORT, TYPE_BIGINT, TYPE_SMALLINT, TYPE_ANY, TYPE_OBJECT);
 
     @Contract("_ -> new")
     private static @NotNull IElementType t(String name) {

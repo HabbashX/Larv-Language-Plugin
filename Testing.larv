@@ -1,6 +1,9 @@
-func test(s:string) {
+class Testing {
 
+
+    func test(gg:string) -> string {
+
+        print("")
+        return "Hello World"
+    }
 }
-
-test("hello world")
-

@@ -1213,12 +1213,19 @@ public final class LarvCompletionContributor extends CompletionContributor {
         private void addBuiltinTypeCompletions(@NotNull CompletionResultSet result) {
             record TypeEntry(String name, String desc) {}
             List<TypeEntry> types = List.of(
-                    new TypeEntry("string",  "text value"),
-                    new TypeEntry("int",     "integer number"),
-                    new TypeEntry("bool",    "true / false"),
-                    new TypeEntry("float",   "decimal (32-bit)"),
-                    new TypeEntry("double",  "decimal (64-bit)"),
-                    new TypeEntry("long",    "large integer (64-bit)")
+                    new TypeEntry("string",   "text value"),
+                    new TypeEntry("int",      "integer number (32-bit)"),
+                    new TypeEntry("long",     "large integer (64-bit)"),
+                    new TypeEntry("bool",     "true / false"),
+                    new TypeEntry("float",    "decimal (32-bit)"),
+                    new TypeEntry("double",   "decimal (64-bit)"),
+                    new TypeEntry("char",     "single character"),
+                    new TypeEntry("byte",     "byte value (8-bit)"),
+                    new TypeEntry("short",    "short integer (16-bit)"),
+                    new TypeEntry("bigint",   "arbitrary precision integer"),
+                    new TypeEntry("smallint", "small integer"),
+                    new TypeEntry("any",      "any type"),
+                    new TypeEntry("object",   "object reference")
             );
             for (TypeEntry t : types) {
                 result.addElement(
@@ -1275,7 +1282,9 @@ public final class LarvCompletionContributor extends CompletionContributor {
                 "true", "false", "nil", "this", "new",
                 "break", "continue", "in", "from", "involve",
                 "as", "catch", "finally", "case", "default",
-                "override", "core", "sync", "defer", "atomic", "volatile"
+                "override", "core", "sync", "defer", "atomic", "volatile",
+                "string", "int", "bool", "float", "double", "long",
+                "char", "byte", "short", "bigint", "smallint", "any", "object"
         );
 
         private static @NotNull LookupElement keyword(String kw) {

@@ -14,6 +14,7 @@ import com.intellij.psi.PsiManager;
 import com.intellij.psi.search.FileTypeIndex;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -255,6 +256,7 @@ public final class LarvFileResolver {
      * Converts an {@link InterfaceStatement} AST node into a {@link LarvClassInfo}
      * by walking its body for method declarations.
      */
+    @Contract("_ -> new")
     @NotNull
     private static LarvClassInfo buildInterfaceInfo(@NotNull InterfaceStatement is) {
         List<LarvMethodInfo> methods = new ArrayList<>();

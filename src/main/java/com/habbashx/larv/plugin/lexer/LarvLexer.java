@@ -220,6 +220,13 @@ public class LarvLexer extends LexerBase {
             case "float"    -> LarvTokenTypes.TYPE_FLOAT;
             case "double"   -> LarvTokenTypes.TYPE_DOUBLE;
             case "long"     -> LarvTokenTypes.TYPE_LONG;
+            case "char"     -> LarvTokenTypes.TYPE_CHAR;
+            case "byte"     -> LarvTokenTypes.TYPE_BYTE;
+            case "short"    -> LarvTokenTypes.TYPE_SHORT;
+            case "bigint"   -> LarvTokenTypes.TYPE_BIGINT;
+            case "smallint" -> LarvTokenTypes.TYPE_SMALLINT;
+            case "any"      -> LarvTokenTypes.TYPE_ANY;
+            case "object"   -> LarvTokenTypes.TYPE_OBJECT;
             default         -> LarvTokenTypes.IDENTIFIER;
         };
     }

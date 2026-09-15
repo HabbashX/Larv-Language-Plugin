@@ -106,7 +106,6 @@ public final class LarvSyntaxHighlighter extends SyntaxHighlighterBase {
         if (type == LarvTokenTypes.DOT)                             return DOT_KEYS;
         if (type == LarvTokenTypes.SEMICOLON)                       return SEMI_KEYS;
         if (type == LarvTokenTypes.BAD_CHAR)                        return BAD_KEYS;
-        if (LarvTokenTypes.BUILTIN_TYPES.contains(type))            return TYPE_REF_KEYS;
         return EMPTY;
     }
 
