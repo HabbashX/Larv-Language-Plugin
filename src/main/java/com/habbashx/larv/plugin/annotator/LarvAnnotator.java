@@ -42,6 +42,16 @@ public final class LarvAnnotator implements Annotator {
                     "LARV_REFERENCE",
                     com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CONSTANT);
 
+    public static final TextAttributesKey LOCAL_VAR_KEY =
+            TextAttributesKey.createTextAttributesKey(
+                    "LARV_LOCAL_VAR",
+                    com.intellij.openapi.editor.DefaultLanguageHighlighterColors.LOCAL_VARIABLE);
+
+    public static final TextAttributesKey CLASS_REF_KEY =
+            TextAttributesKey.createTextAttributesKey(
+                    "LARV_CLASS_REF",
+                    com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CLASS_REFERENCE);
+
     private static final Set<String> BUILTINS =
             Set.of("input", "len", "range", "print", "printErr");
 
@@ -159,6 +169,35 @@ public final class LarvAnnotator implements Annotator {
                 || parentType == LarvElementTypes.ENUM_DECL) {
             setHighlight(element, holder, CLASS_NAME_KEY);
             return;
+        }
+
+        // ── Variable declaration names: var x = ... ──────────────────────
+        if (parentType == LarvElementTypes.VAR_DECL) {
+            // First IDENTIFIER in VAR_DECL is the variable name
+            ASTNode prev = skipWhitespaceBackward(element.getNode().getTreePrev());
+            if (prev == null || prev.getElementType() == LarvTokenTypes.VAR) {
+                setHighlight(element, holder, LOCAL_VAR_KEY);
+                return;
+            }
+        }
+
+        // ── Const declaration names: const X = ... ──────────────────────
+        if (parentType == LarvElementTypes.CONST_DECL) {
+            ASTNode prev = skipWhitespaceBackward(element.getNode().getTreePrev());
+            if (prev == null || prev.getElementType() == LarvTokenTypes.CONST) {
+                setHighlight(element, holder, CONST_NAME_KEY);
+                return;
+            }
+        }
+
+        // ── Superclass names: class Foo : Bar ──────────────────────────
+        if (parentType == LarvElementTypes.CLASS_DECL) {
+            // After COLON in CLASS_DECL, the IDENTIFIER is the superclass
+            ASTNode prev = skipWhitespaceBackward(element.getNode().getTreePrev());
+            if (prev != null && prev.getElementType() == LarvTokenTypes.COLON) {
+                setHighlight(element, holder, CLASS_REF_KEY);
+                return;
+            }
         }
 
         if (parentType == LarvElementTypes.NEW_EXPR) {

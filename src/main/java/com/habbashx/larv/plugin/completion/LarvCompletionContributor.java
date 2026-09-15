@@ -3,6 +3,7 @@ package com.habbashx.larv.plugin.completion;
 import com.habbashx.larv.plugin.lang.LarvLanguage;
 import com.habbashx.larv.plugin.lexer.LarvTokenTypes;
 import com.habbashx.larv.plugin.parser.LarvElementTypes;
+import com.habbashx.larv.plugin.registry.StdlibRegistry;
 import com.intellij.codeInsight.completion.*;
 import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.codeInsight.lookup.LookupElementBuilder;
@@ -616,25 +617,59 @@ public final class LarvCompletionContributor extends CompletionContributor {
             return "";
         }
 
+        @Nullable
+        private String extractReturnType(@NotNull PsiElement funcDecl) {
+            // Look for ARROW token followed by type identifier
+            boolean arrowSeen = false;
+            for (com.intellij.lang.ASTNode n : funcDecl.getNode().getChildren(null)) {
+                if (n.getElementType() == com.intellij.psi.TokenType.WHITE_SPACE) continue;
+                if (n.getElementType() == LarvTokenTypes.ARROW) { arrowSeen = true; continue; }
+                if (arrowSeen) {
+                    if (n.getElementType() == LarvTokenTypes.IDENTIFIER) return n.getText();
+                    if (LarvTokenTypes.BUILTIN_TYPES.contains(n.getElementType())) return n.getText();
+                    break;
+                }
+            }
+            return null;
+        }
+
         @NotNull
         private List<String> extractParamNames(@NotNull PsiElement funcDecl) {
             for (PsiElement child : funcDecl.getChildren()) {
                 if (child.getNode().getElementType() == LarvElementTypes.PARAM_LIST) {
                     List<String> params = new ArrayList<>();
                     boolean afterName = false;
+                    String currentName = null;
                     for (com.intellij.lang.ASTNode n : child.getNode().getChildren(null)) {
                         IElementType t = n.getElementType();
                         if (t == LarvTokenTypes.IDENTIFIER) {
                             if (!afterName) {
-                                params.add(n.getText());
+                                currentName = n.getText();
                                 afterName = true;
+                            } else if (currentName != null) {
+                                // This is the type after colon — append to param
+                                params.add(currentName + ": " + n.getText());
+                                currentName = null;
+                                afterName = false;
                             }
                         } else if (t == LarvTokenTypes.COMMA) {
+                            if (currentName != null) {
+                                params.add(currentName);
+                                currentName = null;
+                            }
                             afterName = false;
                         } else if (t == LarvTokenTypes.COLON) {
                             afterName = true;
+                        } else if (LarvTokenTypes.BUILTIN_TYPES.contains(t)) {
+                            // Built-in type token (TYPE_INT, TYPE_STRING, etc.)
+                            if (currentName != null) {
+                                params.add(currentName + ": " + n.getText());
+                                currentName = null;
+                                afterName = false;
+                            }
                         }
                     }
+                    if (currentName != null) params.add(currentName);
                     return params;
                 }
             }
@@ -1203,25 +1238,25 @@ public final class LarvCompletionContributor extends CompletionContributor {
         }
 
         private void addStdLibs(@NotNull CompletionResultSet result) {
-            Map<String, String> libs = new LinkedHashMap<>();
-            libs.put("math",       "sqrt, pow, abs, floor, ceil, sin, cos, log, PI");
-            libs.put("io",         "readFile, writeFile, appendFile, deleteFile, listDir");
-            libs.put("string",     "strLen, strUpper, strLower, strTrim, strSplit, strReplace");
-            libs.put("list",       "listAdd, listGet, listSize, listSort, listRemove");
-            libs.put("map",        "mapSet, mapGet, mapHas, mapKeys, mapValues");
-            libs.put("http",       "httpGet, httpPost, httpPut, httpDelete");
-            libs.put("system",     "exit, getEnv, exec, sleep, clock");
-            libs.put("date",       "now, formatDate, parseDate, dateDiff, addDays");
-            libs.put("base64",     "base64Encode, base64Decode, urlEncode, urlDecode");
-            libs.put("regex",      "compile, matches, find, replaceAll, split");
-            libs.put("converter",  "toInt, toFloat, toString, toBool");
-            libs.put("properties", "loadProp, getProp, setProp, saveProp");
-            libs.put("json",       "jsonStringify, jsonParse, jsonGet, jsonHas");
-            libs.put("jdbc",       "dbConnect, dbQuery, dbExecute, dbClose");
-            libs.put("thread",     "spawn, threadSleep, channelNew, channelSend");
-            libs.put("socket",     "connect, send, receive, close");
-            libs.put("server",     "bind, accept, close");
-            for (Map.Entry<String, String> entry : libs.entrySet()) {
+            Map<String, String> libDescriptions = new LinkedHashMap<>();
+            libDescriptions.put("math",       "sqrt, pow, abs, floor, ceil, sin, cos, log, PI");
+            libDescriptions.put("io",         "readFile, writeFile, appendFile, deleteFile, listDir");
+            libDescriptions.put("string",     "strLen, strUpper, strLower, strTrim, strSplit, strReplace");
+            libDescriptions.put("list",       "listAdd, listGet, listSize, listSort, listRemove");
+            libDescriptions.put("map",        "mapSet, mapGet, mapHas, mapKeys, mapValues");
+            libDescriptions.put("http",       "httpGet, httpPost, httpPut, httpDelete");
+            libDescriptions.put("system",     "exit, getEnv, exec, sleep, clock");
+            libDescriptions.put("date",       "now, formatDate, parseDate, dateDiff, addDays");
+            libDescriptions.put("base64",     "base64Encode, base64Decode, urlEncode, urlDecode");
+            libDescriptions.put("regex",      "compile, matches, find, replaceAll, split");
+            libDescriptions.put("converter",  "toInt, toFloat, toString, toBool");
+            libDescriptions.put("properties", "loadProp, getProp, setProp, saveProp");
+            libDescriptions.put("json",       "jsonStringify, jsonParse, jsonGet, jsonHas");
+            libDescriptions.put("jdbc",       "dbConnect, dbQuery, dbExecute, dbClose");
+            libDescriptions.put("thread",     "spawn, threadSleep, channelNew, channelSend");
+            libDescriptions.put("socket",     "connect, send, receive, close");
+            libDescriptions.put("server",     "bind, accept, close");
+            for (Map.Entry<String, String> entry : libDescriptions.entrySet()) {
                 result.addElement(LookupElementBuilder.create(entry.getKey())
                         .withTypeText("stdlib")
                         .withTailText("  — " + entry.getValue(), true)
@@ -1257,11 +1292,22 @@ public final class LarvCompletionContributor extends CompletionContributor {
         }
 
         private void addBuiltins(@NotNull CompletionResultSet result) {
-            result.addElement(builtin("print",    "(object)",  "print to stdout"));
-            result.addElement(builtin("printErr", "(message)", "print to stderr"));
-            result.addElement(builtin("input",    "(prompt)",  "read line from stdin"));
-            result.addElement(builtin("len",      "(list)",    "length of list or string"));
-            result.addElement(builtin("range",    "(n)/(a,b)", "numeric range list"));
+            for (StdlibRegistry.StdMethod m : StdlibRegistry.LIBRARIES.get("core")) {
+                result.addElement(LookupElementBuilder.create(m.name()).bold()
+                        .withPresentableText(m.name() + m.signature())
+                        .withTailText(" -> " + m.returnType(), true)
+                        .withTypeText(m.description())
+                        .withInsertHandler((ctx, item) -> {
+                            int off = ctx.getTailOffset();
+                            if (m.name().equals("print") || m.name().equals("printErr")) {
+                                ctx.getEditor().getDocument().insertString(off, "(\"\")");
+                                ctx.getEditor().getCaretModel().moveToOffset(off + 2);
+                                return;
+                            }
+                            ctx.getEditor().getDocument().insertString(off, "()");
+                            ctx.getEditor().getCaretModel().moveToOffset(off + 1);
+                        }));
+            }
         }
 
         private static LookupElement builtin(String name, String params, String desc) {
@@ -1297,9 +1343,11 @@ public final class LarvCompletionContributor extends CompletionContributor {
                         boolean isCore = hasFuncModifier(child, LarvTokenTypes.CORE);
                         boolean isAsync = hasFuncModifier(child, LarvTokenTypes.ASYNC);
                         String paramStr = String.join(", ", paramNames);
+                        String returnHint = extractReturnType(child);
                         String label = paramNames.isEmpty()
                                 ? name + "()"
                                 : name + "(" + paramStr + ")";
+                        if (returnHint != null) label += " -> " + returnHint;
                         String typeLabel = (isCore ? "core " : "") + (isAsync ? "async " : "") + "func";
                         result.addElement(LookupElementBuilder.create(name)
                                 .withPresentableText(label)
@@ -1343,16 +1391,17 @@ public final class LarvCompletionContributor extends CompletionContributor {
         // ── Stdlib method completion ──────────────────────────────────────────
 
         private boolean addStdLibMethodsForReceiver(@NotNull String receiver,
-                                                    @NotNull PsiFile file,
-                                                    @NotNull CompletionResultSet result) {
+                                                     @NotNull PsiFile file,
+                                                     @NotNull CompletionResultSet result) {
             String libName = findImportedLib(receiver, file);
             if (libName == null) return false;
-            List<StdMethod> methods = STDLIB_METHODS.get(libName);
+            List<StdlibRegistry.StdMethod> methods = StdlibRegistry.LIBRARIES.get(libName);
             if (methods == null) return false;
-            for (StdMethod m : methods) {
-                result.addElement(LookupElementBuilder.create(m.name)
-                        .withTypeText(libName)
-                        .withTailText("(" + m.params + ")", true)
+            for (StdlibRegistry.StdMethod m : methods) {
+                result.addElement(LookupElementBuilder.create(m.name())
+                        .withPresentableText(m.name() + m.signature())
+                        .withTypeText(m.returnType() + " · " + libName)
+                        .withTailText("  — " + m.description(), true)
                         .bold()
                         .withInsertHandler((ctx, item) -> {
                             int off = ctx.getTailOffset();
@@ -1378,16 +1427,18 @@ public final class LarvCompletionContributor extends CompletionContributor {
         }
 
         private void addAllImportedLibMethods(@NotNull PsiFile file,
-                                              @NotNull CompletionResultSet result) {
+                                               @NotNull CompletionResultSet result) {
             Set<String> importedLibs = collectImportedLibs(file);
-            for (Map.Entry<String, List<StdMethod>> entry : STDLIB_METHODS.entrySet()) {
+            for (Map.Entry<String, List<StdlibRegistry.StdMethod>> entry : StdlibRegistry.LIBRARIES.entrySet()) {
                 String libName = entry.getKey();
+                if ("core".equals(libName)) continue; // builtins handled separately
                 boolean alreadyImported = importedLibs.contains(libName);
-                for (StdMethod m : entry.getValue()) {
+                for (StdlibRegistry.StdMethod m : entry.getValue()) {
                     String tailSuffix = alreadyImported ? "" : "  [auto-import \"" + libName + "\"]";
-                    result.addElement(LookupElementBuilder.create(m.name)
-                            .withTypeText(libName)
-                            .withTailText("(" + m.params + ")" + tailSuffix, true)
+                    result.addElement(LookupElementBuilder.create(m.name())
+                            .withPresentableText(m.name() + m.signature())
+                            .withTypeText(m.returnType() + " · " + libName)
+                            .withTailText("  — " + m.description() + tailSuffix, true)
                             .bold()
                             .withInsertHandler((ctx, item) -> {
                                 int off = ctx.getTailOffset();
@@ -1419,7 +1470,7 @@ public final class LarvCompletionContributor extends CompletionContributor {
                 IElementType t = child.getElementType();
                 if (t == LarvElementTypes.IMPORT_STMT) {
                     String imported = firstStringLiteral(child.getPsi());
-                    if (imported != null && STDLIB_METHODS.containsKey(imported)) libs.add(imported);
+                    if (imported != null && StdlibRegistry.LIBRARIES.containsKey(imported)) libs.add(imported);
                 }
                 collectImportedLibsInto(child.getPsi(), libs);
                 child = child.getTreeNext();
@@ -1442,7 +1493,7 @@ public final class LarvCompletionContributor extends CompletionContributor {
                                 // but are stdlib identifiers, not file paths.
                                 boolean isExplicitLarv = path.endsWith(".larv");
                                 boolean isBareFileName = !path.contains(".")
-                                        && !STDLIB_METHODS.containsKey(path);
+                                        && !StdlibRegistry.LIBRARIES.containsKey(path);
                                 if (isExplicitLarv || isBareFileName) {
                                     paths.add(path);
                                 }

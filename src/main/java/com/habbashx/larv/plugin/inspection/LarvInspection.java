@@ -2,6 +2,7 @@ package com.habbashx.larv.plugin.inspection;
 
 import com.habbashx.larv.plugin.lexer.LarvTokenTypes;
 import com.habbashx.larv.plugin.parser.LarvElementTypes;
+import com.habbashx.larv.plugin.registry.StdlibRegistry;
 import com.intellij.codeInspection.*;
 import com.intellij.lang.ASTNode;
 import com.intellij.openapi.diagnostic.Logger;
@@ -768,6 +769,10 @@ public final class LarvInspection extends LocalInspectionTool {
                 + " funcArity=" + funcArity
                 + " callExpr='" + callExpr.getText() + "'"
                 + " callExprType=" + callExpr.getNode().getElementType());
+
+        if (StdlibRegistry.BUILTINS.contains(calledName)) {
+            return;
+        }
 
         for (Map.Entry<String, List<String>> entry : STDLIB_METHODS.entrySet()) {
             if (entry.getValue().contains(calledName)) {
