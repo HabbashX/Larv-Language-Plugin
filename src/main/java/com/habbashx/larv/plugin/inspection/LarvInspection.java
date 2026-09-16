@@ -57,6 +57,8 @@ public final class LarvInspection extends LocalInspectionTool {
         Map<String, Map<String, Integer>> classMethodArity = new LinkedHashMap<>();
 
         Map<String, Integer>     funcArity      = new LinkedHashMap<>();
+        // funcName -> return type (null if no return type annotation)
+        Map<String, String>      funcReturnType = new LinkedHashMap<>();
         Set<String>              constNames     = new LinkedHashSet<>();
 
         collectImportedLibs(file, importedLibs, importElements);
@@ -65,6 +67,9 @@ public final class LarvInspection extends LocalInspectionTool {
         resolveInheritedMethods(classToMethods, classHierarchy, classCoreMethod);
         resolveInheritedMethodArity(classMethodArity, classHierarchy);
         collectFuncArity(file, funcArity);
+        collectFuncReturnTypes(file, funcReturnType);
+        // Also collect class method return types
+        collectClassMethodReturnTypes(file, classMethodArity, funcReturnType);
         collectIncludes(file, includeElements);
 
         // Collect names of classes that come from other files (include aliases + import stems).
@@ -79,7 +84,7 @@ public final class LarvInspection extends LocalInspectionTool {
 
         walkForInspection(file, manager, problems, declared, used, usedLibs,
                 importedLibs, varToClass, classToMethods, classOwnMethods, classHierarchy,
-                classCoreMethod, classMethodArity, funcArity, constNames, externalClassNames, new ArrayDeque<>(), isOnTheFly);
+                classCoreMethod, classMethodArity, funcArity, funcReturnType, constNames, externalClassNames, new ArrayDeque<>(), isOnTheFly);
 
         // Unused includes
         for (Map.Entry<String, PsiElement> entry : includeElements.entrySet()) {
@@ -119,6 +124,7 @@ public final class LarvInspection extends LocalInspectionTool {
                                    @NotNull Map<String, Set<String>> classCoreMethod,
                                    @NotNull Map<String, Map<String, Integer>> classMethodArity,
                                    @NotNull Map<String, Integer> funcArity,
+                                   @NotNull Map<String, String> funcReturnType,
                                    @NotNull Set<String> constNames,
                                    @NotNull Set<String> externalClassNames,
                                    @NotNull Deque<Set<String>> scopeStack,
@@ -140,7 +146,7 @@ public final class LarvInspection extends LocalInspectionTool {
                     for (PsiElement child : element.getChildren()) {
                         walkForInspection(child, manager, problems, declared, used, usedLibs,
                                 importedLibs, varToClass, classToMethods, classOwnMethods, classHierarchy,
-                                classCoreMethod, classMethodArity, funcArity, constNames, externalClassNames, scopeStack, onTheFly);
+                                classCoreMethod, classMethodArity, funcArity, funcReturnType, constNames, externalClassNames, scopeStack, onTheFly);
                     }
                     return;
                 }
@@ -202,6 +208,17 @@ public final class LarvInspection extends LocalInspectionTool {
             checkEmptyFuncBody(element, manager, problems, onTheFly);
             checkMissingReturn(element, manager, problems, onTheFly);
             checkSyncModifier(element, manager, problems, onTheFly);
+            checkReturnTypeMismatch(element, funcReturnType, manager, problems, onTheFly);
+        }
+
+        // ── return statement type check ──────────────────────────────────────
+        if (type == LarvElementTypes.RETURN_STMT) {
+            checkReturnValueType(element, funcReturnType, manager, problems, onTheFly);
+        }
+
+        // ── var declaration: check if function call return type matches ──────
+        if (type == LarvElementTypes.VAR_DECL || type == LarvElementTypes.CONST_DECL) {
+            checkVarDeclTypeMatch(element, funcReturnType, manager, problems, onTheFly);
         }
 
         // ── class declarations ────────────────────────────────────────────────
@@ -296,7 +313,7 @@ public final class LarvInspection extends LocalInspectionTool {
         for (PsiElement child : element.getChildren()) {
             walkForInspection(child, manager, problems, declared, used, usedLibs,
                     importedLibs, varToClass, classToMethods, classOwnMethods, classHierarchy,
-                    classCoreMethod, classMethodArity, funcArity, constNames, externalClassNames, scopeStack, onTheFly);
+                    classCoreMethod, classMethodArity, funcArity, funcReturnType, constNames, externalClassNames, scopeStack, onTheFly);
         }
 
         if (opensScope) scopeStack.pop();
@@ -1080,6 +1097,383 @@ public final class LarvInspection extends LocalInspectionTool {
         }
     }
 
+    // ── Return type collection and checking ──────────────────────────────────
+
+    /**
+     * Collects function return types from FUNC_DECL nodes.
+     * Syntax: func name() -> ReturnType { ... }
+     */
+    private void collectFuncReturnTypes(@NotNull PsiElement scope,
+                                         @NotNull Map<String, String> map) {
+        for (PsiElement child : scope.getChildren()) {
+            if (child.getNode() == null) continue;
+            if (child.getNode().getElementType() == LarvElementTypes.FUNC_DECL) {
+                String name = firstIdentifierText(child);
+                String returnType = extractReturnType(child);
+                if (name != null && returnType != null) {
+                    map.put(name, returnType);
+                }
+            }
+            collectFuncReturnTypes(child, map);
+        }
+    }
+
+    /**
+     * Collects class method return types from FUNC_DECL nodes inside CLASS_DECL.
+     */
+    private void collectClassMethodReturnTypes(@NotNull PsiElement scope,
+                                                @NotNull Map<String, Map<String, Integer>> classMethodArity,
+                                                @NotNull Map<String, String> funcReturnType) {
+        for (PsiElement child : scope.getChildren()) {
+            if (child.getNode() == null) continue;
+            if (child.getNode().getElementType() == LarvElementTypes.CLASS_DECL) {
+                String className = firstIdentifierText(child);
+                if (className != null) {
+                    for (PsiElement member : child.getChildren()) {
+                        if (member.getNode() == null) continue;
+                        if (member.getNode().getElementType() == LarvElementTypes.FUNC_DECL) {
+                            String methodName = firstIdentifierText(member);
+                            String returnType = extractReturnType(member);
+                            if (methodName != null && returnType != null) {
+                                funcReturnType.put(className + "." + methodName, returnType);
+                            }
+                        }
+                    }
+                }
+            }
+            collectClassMethodReturnTypes(child, classMethodArity, funcReturnType);
+        }
+    }
+
+    /**
+     * Extracts the return type from a FUNC_DECL node.
+     * Syntax: func name() -> ReturnType { ... }
+     */
+    @Nullable
+    private static String extractReturnType(@NotNull PsiElement funcDecl) {
+        boolean arrowSeen = false;
+        for (ASTNode n : funcDecl.getNode().getChildren(null)) {
+            IElementType t = n.getElementType();
+            if (t == com.intellij.psi.TokenType.WHITE_SPACE) continue;
+            if (t == LarvTokenTypes.ARROW) { arrowSeen = true; continue; }
+            if (arrowSeen) {
+                if (t == LarvTokenTypes.IDENTIFIER) return n.getText();
+                if (LarvTokenTypes.BUILTIN_TYPES.contains(t)) return n.getText();
+                break;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Checks that the return type annotation on a FUNC_DECL matches any
+     * literal return values inside the function body.
+     */
+    private void checkReturnTypeMismatch(@NotNull PsiElement funcDecl,
+                                          @NotNull Map<String, String> funcReturnType,
+                                          @NotNull InspectionManager manager,
+                                          @NotNull List<ProblemDescriptor> problems,
+                                          boolean onTheFly) {
+        String funcName = firstIdentifierText(funcDecl);
+        if (funcName == null) return;
+        String expectedType = funcReturnType.get(funcName);
+        if (expectedType == null) return;
+
+        // Walk the function body for RETURN_STMT nodes
+        for (PsiElement child : funcDecl.getChildren()) {
+            if (child.getNode().getElementType() == LarvElementTypes.BLOCK) {
+                checkBlockReturnTypes(child, expectedType, funcName, funcReturnType,
+                        manager, problems, onTheFly);
+            }
+        }
+    }
+
+    /**
+     * Walks a block looking for RETURN_STMT and checks the returned expression type.
+     */
+    private void checkBlockReturnTypes(@NotNull PsiElement block,
+                                        @NotNull String expectedType,
+                                        @NotNull String funcName,
+                                        @NotNull Map<String, String> funcReturnType,
+                                        @NotNull InspectionManager manager,
+                                        @NotNull List<ProblemDescriptor> problems,
+                                        boolean onTheFly) {
+        for (PsiElement stmt : block.getChildren()) {
+            if (stmt.getNode().getElementType() == LarvElementTypes.RETURN_STMT) {
+                checkReturnValueType(stmt, expectedType, funcName, funcReturnType,
+                        manager, problems, onTheFly);
+            }
+            // Also check inside if/while/for blocks
+            if (stmt.getNode().getElementType() == LarvElementTypes.IF_STMT
+                    || stmt.getNode().getElementType() == LarvElementTypes.WHILE_STMT
+                    || stmt.getNode().getElementType() == LarvElementTypes.FOR_STMT
+                    || stmt.getNode().getElementType() == LarvElementTypes.FOREACH_STMT) {
+                for (PsiElement child : stmt.getChildren()) {
+                    if (child.getNode().getElementType() == LarvElementTypes.BLOCK) {
+                        checkBlockReturnTypes(child, expectedType, funcName, funcReturnType,
+                                manager, problems, onTheFly);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Overload for direct RETURN_STMT checking (from the walker).
+     */
+    private void checkReturnValueType(@NotNull PsiElement returnStmt,
+                                       @NotNull Map<String, String> funcReturnType,
+                                       @NotNull InspectionManager manager,
+                                       @NotNull List<ProblemDescriptor> problems,
+                                       boolean onTheFly) {
+        // Find the enclosing function
+        String funcName = enclosingFuncName(returnStmt);
+        if (funcName == null) return;
+        String expectedType = funcReturnType.get(funcName);
+        if (expectedType == null) return;
+
+        checkReturnValueType(returnStmt, expectedType, funcName, funcReturnType,
+                manager, problems, onTheFly);
+    }
+
+    /**
+     * Checks a RETURN_STMT's expression against the expected return type.
+     */
+    private void checkReturnValueType(@NotNull PsiElement returnStmt,
+                                       @NotNull String expectedType,
+                                       @NotNull String funcName,
+                                       @NotNull Map<String, String> funcReturnType,
+                                       @NotNull InspectionManager manager,
+                                       @NotNull List<ProblemDescriptor> problems,
+                                       boolean onTheFly) {
+        // Find the return expression (first meaningful child after RETURN token)
+        PsiElement returnExpr = null;
+        boolean returnSeen = false;
+        for (PsiElement child : returnStmt.getChildren()) {
+            if (child.getNode() == null) continue;
+            IElementType t = child.getNode().getElementType();
+            if (t == LarvTokenTypes.RETURN) { returnSeen = true; continue; }
+            if (returnSeen && t != com.intellij.psi.TokenType.WHITE_SPACE) {
+                returnExpr = child;
+                break;
+            }
+        }
+        if (returnExpr == null) return; // bare return — no type to check
+
+        String actualType = inferExpressionType(returnExpr, funcReturnType);
+        if (actualType == null) return; // can't determine type — skip
+
+        if (!isTypeCompatible(expectedType, actualType)) {
+            problems.add(manager.createProblemDescriptor(
+                    returnStmt,
+                    "Return type mismatch: function '" + funcName + "' expects '"
+                            + expectedType + "' but returns '" + actualType + "'",
+                    (LocalQuickFix) null,
+                    ProblemHighlightType.ERROR,
+                    onTheFly));
+        }
+    }
+
+    /**
+     * Checks a VAR_DECL / CONST_DECL where the initializer is a function call,
+     * and verifies the call's return type matches the declared type.
+     */
+    private void checkVarDeclTypeMatch(@NotNull PsiElement varDecl,
+                                        @NotNull Map<String, String> funcReturnType,
+                                        @NotNull InspectionManager manager,
+                                        @NotNull List<ProblemDescriptor> problems,
+                                        boolean onTheFly) {
+        // Get the declared type from TYPE_ANNOTATION
+        String declaredType = extractDeclaredType(varDecl);
+        if (declaredType == null) return;
+
+        // Find a CALL_EXPR in the initializer
+        PsiElement callExpr = findChildOfType(varDecl, LarvElementTypes.CALL_EXPR);
+        if (callExpr == null) return;
+
+        // Determine the called function's return type
+        ASTNode firstAst = callExpr.getNode().getFirstChildNode();
+        if (firstAst == null) return;
+
+        String returnType = null;
+        if (firstAst.getElementType() == LarvElementTypes.VAR_EXPR) {
+            String funcName = firstAst.getText();
+            returnType = funcReturnType.get(funcName);
+            // Check stdlib builtins
+            if (returnType == null) {
+                StdlibRegistry.StdMethod m = StdlibRegistry.findMethod(funcName);
+                if (m != null) returnType = m.returnType();
+            }
+        } else if (firstAst.getElementType() == LarvElementTypes.GET_EXPR) {
+            // obj.method() — try to resolve class method return type
+            String receiverName = null;
+            String methodName = null;
+            boolean dotSeen = false;
+            for (ASTNode n : firstAst.getChildren(null)) {
+                IElementType t = n.getElementType();
+                if (t == com.intellij.psi.TokenType.WHITE_SPACE) continue;
+                if (!dotSeen) {
+                    if (t == LarvElementTypes.VAR_EXPR || t == LarvTokenTypes.IDENTIFIER)
+                        receiverName = n.getText();
+                    else if (t == LarvTokenTypes.DOT) dotSeen = true;
+                } else {
+                    if (t == LarvTokenTypes.IDENTIFIER) { methodName = n.getText(); break; }
+                }
+            }
+            if (receiverName != null && methodName != null) {
+                // Try "ClassName.methodName" pattern — but we don't have class-to-var mapping here
+                // Try direct lookup
+                returnType = funcReturnType.get(methodName);
+            }
+        }
+
+        if (returnType == null) return; // can't determine — skip
+
+        if (!isTypeCompatible(declaredType, returnType)) {
+            PsiElement typeNode = findTypeAnnotationNode(varDecl);
+            problems.add(manager.createProblemDescriptor(
+                    typeNode != null ? typeNode : varDecl,
+                    "Type mismatch: variable is declared as '" + declaredType
+                            + "' but function returns '" + returnType + "'",
+                    (LocalQuickFix) null,
+                    ProblemHighlightType.ERROR,
+                    onTheFly));
+        }
+    }
+
+    /**
+     * Extracts the declared type from a VAR_DECL / CONST_DECL's TYPE_ANNOTATION.
+     */
+    @Nullable
+    private static String extractDeclaredType(@NotNull PsiElement varDecl) {
+        for (PsiElement child : varDecl.getChildren()) {
+            if (child.getNode() == null) continue;
+            if (child.getNode().getElementType() == LarvElementTypes.TYPE_ANNOTATION) {
+                for (ASTNode n : child.getNode().getChildren(null)) {
+                    IElementType t = n.getElementType();
+                    if (t == LarvTokenTypes.IDENTIFIER) return n.getText();
+                    if (LarvTokenTypes.BUILTIN_TYPES.contains(t)) return n.getText();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds the TYPE_ANNOTATION PSI node inside a VAR_DECL.
+     */
+    @Nullable
+    private static PsiElement findTypeAnnotationNode(@NotNull PsiElement varDecl) {
+        for (PsiElement child : varDecl.getChildren()) {
+            if (child.getNode() != null
+                    && child.getNode().getElementType() == LarvElementTypes.TYPE_ANNOTATION) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Infers the type of a simple expression (literals, function calls).
+     */
+    @Nullable
+    private static String inferExpressionType(@NotNull PsiElement expr,
+                                               @NotNull Map<String, String> funcReturnType) {
+        IElementType type = expr.getNode().getElementType();
+
+        // Literal expressions
+        if (type == LarvElementTypes.LITERAL_EXPR) {
+            return inferLiteralType(expr);
+        }
+
+        // Unary expression (e.g. -3)
+        if (type == LarvElementTypes.UNARY_EXPR) {
+            for (PsiElement child : expr.getChildren()) {
+                if (child.getNode().getElementType() == LarvElementTypes.LITERAL_EXPR) {
+                    return inferLiteralType(child);
+                }
+            }
+        }
+
+        // Function call expression
+        if (type == LarvElementTypes.CALL_EXPR) {
+            ASTNode firstAst = expr.getNode().getFirstChildNode();
+            if (firstAst != null && firstAst.getElementType() == LarvElementTypes.VAR_EXPR) {
+                String funcName = firstAst.getText();
+                String rt = funcReturnType.get(funcName);
+                if (rt != null) return rt;
+                // Check stdlib
+                StdlibRegistry.StdMethod m = StdlibRegistry.findMethod(funcName);
+                if (m != null) return m.returnType();
+            }
+        }
+
+        // Boolean literals
+        if (type == LarvTokenTypes.TRUE || type == LarvTokenTypes.FALSE) return "bool";
+
+        // Number
+        for (ASTNode n : expr.getNode().getChildren(null)) {
+            if (n.getElementType() == LarvTokenTypes.NUMBER) {
+                return n.getText().contains(".") ? "float" : "int";
+            }
+            if (n.getElementType() == LarvTokenTypes.STRING || n.getElementType() == LarvTokenTypes.RAW_STRING) {
+                return "string";
+            }
+            if (n.getElementType() == LarvTokenTypes.TRUE || n.getElementType() == LarvTokenTypes.FALSE) {
+                return "bool";
+            }
+            if (n.getElementType() == LarvTokenTypes.NIL) return "nil";
+        }
+
+        return null;
+    }
+
+    /**
+     * Infers the type of a LITERAL_EXPR node.
+     */
+    @Nullable
+    private static String inferLiteralType(@NotNull PsiElement literal) {
+        for (ASTNode n : literal.getNode().getChildren(null)) {
+            IElementType t = n.getElementType();
+            if (t == LarvTokenTypes.NUMBER) return n.getText().contains(".") ? "float" : "int";
+            if (t == LarvTokenTypes.STRING || t == LarvTokenTypes.RAW_STRING) return "string";
+            if (t == LarvTokenTypes.TRUE || t == LarvTokenTypes.FALSE) return "bool";
+            if (t == LarvTokenTypes.NIL) return "nil";
+        }
+        return null;
+    }
+
+    /**
+     * Finds the enclosing function name for a given element.
+     */
+    @Nullable
+    private static String enclosingFuncName(@NotNull PsiElement element) {
+        PsiElement parent = element.getParent();
+        while (parent != null && !(parent instanceof PsiFile)) {
+            if (parent.getNode() != null
+                    && parent.getNode().getElementType() == LarvElementTypes.FUNC_DECL) {
+                return firstIdentifierText(parent);
+            }
+            parent = parent.getParent();
+        }
+        return null;
+    }
+
+    /**
+     * Finds a child of the given type anywhere in the element's subtree.
+     */
+    @Nullable
+    private static PsiElement findChildOfType(@NotNull PsiElement element, IElementType targetType) {
+        for (PsiElement child : element.getChildren()) {
+            if (child.getNode() != null && child.getNode().getElementType() == targetType) {
+                return child;
+            }
+            PsiElement found = findChildOfType(child, targetType);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     /**
      * Collects names of classes (or any identifiers) that originate from other files,
      * so the superclass check can skip them instead of reporting false "not defined" errors.
@@ -1231,15 +1625,22 @@ public final class LarvInspection extends LocalInspectionTool {
     /**
      * Returns true if a literal of the given kind is assignable to the declared type.
      */
-    private static boolean isTypeCompatible(@NotNull String declaredType, @NotNull String literalKind) {
+    private static boolean isTypeCompatible(@NotNull String declaredType, @NotNull String actualType) {
+        if (declaredType.equals(actualType)) return true;
+        if ("any".equals(declaredType) || "any".equals(actualType)) return true;
         return switch (declaredType) {
-            case "string"        -> literalKind.equals("string");
-            case "int"           -> literalKind.equals("int");
-            case "long"          -> literalKind.equals("int");   // int literals fit in long
-            case "float"         -> literalKind.equals("int") || literalKind.equals("float");
-            case "double"        -> literalKind.equals("int") || literalKind.equals("float");
-            case "bool"          -> literalKind.equals("bool");
-            default              -> true; // unknown type — don't complain
+            case "string"  -> actualType.equals("string");
+            case "int"     -> actualType.equals("int");
+            case "long"    -> actualType.equals("int");
+            case "float"   -> actualType.equals("int") || actualType.equals("float");
+            case "double"  -> actualType.equals("int") || actualType.equals("float") || actualType.equals("double");
+            case "bool"    -> actualType.equals("bool");
+            case "byte"    -> actualType.equals("int") || actualType.equals("byte");
+            case "short"   -> actualType.equals("int") || actualType.equals("short");
+            case "bigint"  -> actualType.equals("int") || actualType.equals("long") || actualType.equals("bigint");
+            case "smallint"-> actualType.equals("int") || actualType.equals("short") || actualType.equals("smallint");
+            case "char"    -> actualType.equals("string") || actualType.equals("char");
+            default        -> true;
         };
     }
 
