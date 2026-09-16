@@ -227,6 +227,21 @@ public final class LarvInspection extends LocalInspectionTool {
                     classToMethods, classCoreMethod, externalClassNames, onTheFly);
         }
 
+        // ── interface declarations ────────────────────────────────────────────
+        if (type == LarvElementTypes.INTERFACE_DECL) {
+            checkDuplicateDecl(element, "Interface", manager, problems, onTheFly);
+        }
+
+        // ── duplicate class name check ────────────────────────────────────────
+        if (type == LarvElementTypes.CLASS_DECL) {
+            checkDuplicateDecl(element, "Class", manager, problems, onTheFly);
+        }
+
+        // ── duplicate function name check (top-level) ─────────────────────────
+        if (type == LarvElementTypes.FUNC_DECL && !isInsideClass(element)) {
+            checkDuplicateFuncName(element, manager, problems, onTheFly);
+        }
+
         // ── override / core func declarations inside a class ─────────────────
         if (type == LarvElementTypes.FUNC_DECL && isInsideClass(element)) {
             checkOverrideAndCoreUsage(element, manager, problems,
@@ -482,6 +497,77 @@ public final class LarvInspection extends LocalInspectionTool {
             problems.add(manager.createProblemDescriptor(
                     funcDecl,
                     "A method cannot be both 'core' and 'override'",
+                    (LocalQuickFix) null,
+                    ProblemHighlightType.ERROR,
+                    onTheFly));
+        }
+    }
+
+    /**
+     * Checks if a class/interface name is duplicated in the same file.
+     * Reports if the same name appears more than once as a class or interface declaration.
+     */
+    private void checkDuplicateDecl(@NotNull PsiElement decl,
+                                    @NotNull String kind,
+                                    @NotNull InspectionManager manager,
+                                    @NotNull List<ProblemDescriptor> problems,
+                                    boolean onTheFly) {
+        String name = firstIdentifierText(decl);
+        if (name == null) return;
+
+        PsiFile file = decl.getContainingFile();
+        if (file == null) return;
+
+        int count = 0;
+        for (PsiElement child = file.getFirstChild(); child != null; child = child.getNextSibling()) {
+            String childName = firstIdentifierText(child);
+            if (childName != null && childName.equals(name)) {
+                IElementType childType = child.getNode().getElementType();
+                if ((childType == LarvElementTypes.CLASS_DECL || childType == LarvElementTypes.INTERFACE_DECL)
+                        && child != decl) {
+                    count++;
+                }
+            }
+        }
+
+        if (count > 0) {
+            problems.add(manager.createProblemDescriptor(
+                    decl,
+                    "Duplicate " + kind.toLowerCase() + " name '" + name + "'",
+                    (LocalQuickFix) null,
+                    ProblemHighlightType.ERROR,
+                    onTheFly));
+        }
+    }
+
+    /**
+     * Checks if a top-level function name is duplicated in the same file.
+     */
+    private void checkDuplicateFuncName(@NotNull PsiElement funcDecl,
+                                        @NotNull InspectionManager manager,
+                                        @NotNull List<ProblemDescriptor> problems,
+                                        boolean onTheFly) {
+        String name = firstIdentifierText(funcDecl);
+        if (name == null) return;
+
+        PsiFile file = funcDecl.getContainingFile();
+        if (file == null) return;
+
+        int count = 0;
+        for (PsiElement child = file.getFirstChild(); child != null; child = child.getNextSibling()) {
+            String childName = firstIdentifierText(child);
+            if (childName != null && childName.equals(name)
+                    && child.getNode().getElementType() == LarvElementTypes.FUNC_DECL
+                    && child != funcDecl
+                    && !isInsideClass(child)) {
+                count++;
+            }
+        }
+
+        if (count > 0) {
+            problems.add(manager.createProblemDescriptor(
+                    funcDecl,
+                    "Duplicate function name '" + name + "'",
                     (LocalQuickFix) null,
                     ProblemHighlightType.ERROR,
                     onTheFly));
