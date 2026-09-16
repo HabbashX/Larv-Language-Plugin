@@ -215,6 +215,7 @@ public class LarvLexer extends LexerBase {
             case "interface" -> LarvTokenTypes.INTERFACE;
             case "implements" -> LarvTokenTypes.IMPLEMENTS;
             case "is"       -> LarvTokenTypes.IS;
+            case "constructor" -> LarvTokenTypes.CONSTRUCTOR;
             case "string"   -> LarvTokenTypes.TYPE_STRING;
             case "int"      -> LarvTokenTypes.TYPE_INT;
             case "bool"     -> LarvTokenTypes.TYPE_BOOL;

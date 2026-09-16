@@ -77,6 +77,7 @@ public final class LarvTokenTypes {
     public static final IElementType ENUM     = t("ENUM");
     public static final IElementType GET      = t("GET");
     public static final IElementType SET      = t("SET");
+    public static final IElementType CONSTRUCTOR = t("CONSTRUCTOR");
 
     // ── Operators ─────────────────────────────────────────────────────────────
     public static final IElementType PLUS        = t("PLUS");
@@ -126,6 +127,7 @@ public final class LarvTokenTypes {
             SWITCH, CASE, DEFAULT, ENUM, GET, SET,
             OVERRIDE, CORE, SYNC, DEFER, ATOMIC, VOLATILE, ASYNC, AWAIT,
             INTERFACE, IMPLEMENTS, IS,
+            CONSTRUCTOR,
             TYPE_INT, TYPE_LONG, TYPE_BOOL, TYPE_DOUBLE, TYPE_STRING, TYPE_FLOAT,
             TYPE_CHAR, TYPE_BYTE, TYPE_SHORT, TYPE_BIGINT, TYPE_SMALLINT, TYPE_ANY, TYPE_OBJECT
     );

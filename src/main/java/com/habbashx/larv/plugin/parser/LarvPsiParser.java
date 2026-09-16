@@ -34,6 +34,7 @@ public final class LarvPsiParser implements PsiParser, LightPsiParser {
         if (tt == VAR)      { parseVarDecl(b);    return; }
         if (tt == CONST)    { parseConstDecl(b);  return; }
         if (tt == FUNC)     { parseFuncDecl(b);   return; }
+        if (tt == CONSTRUCTOR) { parseConstructorDecl(b); return; }
         if (tt == OVERRIDE || tt == CORE || tt == SYNC || tt == DEFER || tt == ASYNC) { parseFuncDecl(b); return; }
         if (tt == ATOMIC)   { parseAtomicDecl(b); return; }
         if (tt == VOLATILE) { parseVolatileDecl(b); return; }
@@ -226,6 +227,20 @@ public final class LarvPsiParser implements PsiParser, LightPsiParser {
                 b.advanceLexer(); // consume modifier keyword
             }
         }
+        parseBlock(b);
+        m.done(FUNC_DECL);
+    }
+
+    /**
+     * Parses a constructor declaration:
+     *   constructor(name, age) { ... }
+     *
+     * Grammar:  CONSTRUCTOR  LPAREN  (IDENTIFIER (COMMA IDENTIFIER)*)?  RPAREN  BLOCK
+     */
+    private void parseConstructorDecl(@NotNull PsiBuilder b) {
+        PsiBuilder.Marker m = b.mark();
+        expect(b, CONSTRUCTOR);
+        parseParamList(b);
         parseBlock(b);
         m.done(FUNC_DECL);
     }

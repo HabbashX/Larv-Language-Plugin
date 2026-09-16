@@ -193,6 +193,8 @@ public final class LarvCompletionContributor extends CompletionContributor {
             result.addElement(keywordSnippet("func (typed)", " name(param: type) -> type {\n    \n}"));
             // Snippet: defer func
             result.addElement(keywordSnippet("defer func", " name() {\n    \n}"));
+            // Snippet: constructor
+            result.addElement(keywordSnippet("constructor", "(name, value) {\n    this.name = name\n    this.value = value\n    \n}"));
             // Field snippets
             result.addElement(keywordSnippet("var", " fieldName = "));
             result.addElement(keywordSnippet("var (typed)", " fieldName : type = "));
@@ -242,7 +244,7 @@ public final class LarvCompletionContributor extends CompletionContributor {
                     if (!cls.name().equals(superClassName)) continue;
                     for (LarvFileResolver.LarvMethodInfo m : cls.methods()) {
                         if (m.isCore()) continue;  // core methods cannot be overridden
-                        if (m.name().equals("init")) continue;
+                        if (m.name().equals("init") || m.name().equals("constructor")) continue;
                         offerOverrideStub(m.name(), m.params(), result);
                     }
                     return;
@@ -262,7 +264,7 @@ public final class LarvCompletionContributor extends CompletionContributor {
                 if (child.getNode() == null) continue;
                 if (child.getNode().getElementType() == LarvElementTypes.FUNC_DECL) {
                     String name = firstIdentifier(child);
-                    if (name == null || name.equals("init")) continue;
+                    if (name == null || name.equals("init") || name.equals("constructor")) continue;
                     boolean isCore = hasFuncModifier(child, LarvTokenTypes.CORE);
                     if (isCore) continue;  // sealed — cannot be overridden
                     if (seen.add(name)) {
@@ -334,7 +336,7 @@ public final class LarvCompletionContributor extends CompletionContributor {
                 }
                 if (t == LarvElementTypes.FUNC_DECL) {
                     String name = firstIdentifier(child);
-                    if (name != null && !name.equals("init") && seen.add(name)) {
+                    if (name != null && !name.equals("init") && !name.equals("constructor") && seen.add(name)) {
                         String params = getParamNames(child);
                         boolean isCore = hasFuncModifier(child, LarvTokenTypes.CORE);
                         result.addElement(LookupElementBuilder.create(name)
@@ -612,7 +614,7 @@ public final class LarvCompletionContributor extends CompletionContributor {
             for (PsiElement child : classDecl.getChildren()) {
                 if (child.getNode().getElementType() == LarvElementTypes.FUNC_DECL) {
                     String name = firstIdentifier(child);
-                    if ("init".equals(name)) return getParamNames(child);
+                    if ("init".equals(name) || "constructor".equals(name)) return getParamNames(child);
                 }
             }
             return "";
@@ -1286,7 +1288,8 @@ public final class LarvCompletionContributor extends CompletionContributor {
                 "as", "catch", "finally", "case", "default",
                 "override", "core", "sync", "defer", "atomic", "volatile",
                 "string", "int", "bool", "float", "double", "long",
-                "char", "byte", "short", "bigint", "smallint", "any", "object"
+                "char", "byte", "short", "bigint", "smallint", "any", "object",
+                "constructor"
         );
 
         private static @NotNull LookupElement keyword(String kw) {

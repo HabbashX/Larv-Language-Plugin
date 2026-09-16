@@ -242,7 +242,7 @@ public final class LarvFileResolver {
         Iterator<LarvMethodInfo> it = methods.iterator();
         while (it.hasNext()) {
             LarvMethodInfo m = it.next();
-            if ("init".equals(m.name())) {
+            if ("init".equals(m.name()) || "constructor".equals(m.name())) {
                 ctor = m;
                 it.remove();
                 break;

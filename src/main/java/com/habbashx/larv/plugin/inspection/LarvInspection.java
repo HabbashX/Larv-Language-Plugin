@@ -502,7 +502,7 @@ public final class LarvInspection extends LocalInspectionTool {
 
         // Sync on an 'init' constructor is unusual — warn
         String name = firstIdentifierText(funcDecl);
-        if ("init".equals(name)) {
+        if ("init".equals(name) || "constructor".equals(name)) {
             problems.add(manager.createProblemDescriptor(
                     funcDecl,
                     "The 'sync' modifier on 'init' is unusual — constructors are rarely synchronized",
