@@ -1,9 +1,0 @@
-class Testing {
-
-
-    func test(gg:string) -> string {
-
-        print("")
-        return "Hello World"
-    }
-}

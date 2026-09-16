@@ -108,19 +108,24 @@ public final class LarvPsiParser implements PsiParser, LightPsiParser {
     /**
      * Parses an atomic variable declaration:
      *   atomic<int> counter = 0
-     *   atomic<string> name
+     *   atomic<string> ^name
+     *   atomic<CustomObject> ^customObject = new CustomObject()
      *
-     * Grammar:  ATOMIC  LT  IDENTIFIER  GT  IDENTIFIER  ( EQUAL expr )?
+     * Grammar:  ATOMIC  LT  (IDENTIFIER | BUILTIN_TYPES)  GT  (CARET)?  IDENTIFIER  ( EQUAL expr )?
      */
     private void parseAtomicDecl(@NotNull PsiBuilder b) {
         PsiBuilder.Marker m = b.mark();
         expect(b, ATOMIC);
-        // Optional type parameter:  <int>
+        // Optional type parameter:  <int> or <CustomObject>
         if (b.getTokenType() == LT) {
             b.advanceLexer(); // consume '<'
             if (b.getTokenType() == IDENTIFIER || BUILTIN_TYPES.contains(b.getTokenType()))
                 b.advanceLexer(); // consume type name (cyan via syntax highlighter / annotator)
             expect(b, GT);    // consume '>'
+        }
+        // Optional caret prefix for atomic reference:  ^name
+        if (b.getTokenType() == CARET) {
+            b.advanceLexer(); // consume '^'
         }
         // Variable name
         expect(b, IDENTIFIER);

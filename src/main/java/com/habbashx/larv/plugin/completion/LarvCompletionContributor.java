@@ -202,6 +202,7 @@ public final class LarvCompletionContributor extends CompletionContributor {
             result.addElement(keywordSnippet("var : get", " fieldName : get"));
             // Atomic/volatile field snippets
             result.addElement(keywordSnippet("atomic", "<type> fieldName = "));
+            result.addElement(keywordSnippet("atomic (^)", "<type> ^fieldName = "));
             result.addElement(keywordSnippet("volatile", " fieldName = "));
 
             // Concrete override stubs from local superclass
@@ -1124,7 +1125,8 @@ public final class LarvCompletionContributor extends CompletionContributor {
             result.addElement(keywordSnippet("var (typed)", " name : type = "));
             result.addElement(keywordSnippet("const",   " NAME = "));
             result.addElement(keywordSnippet("const (typed)", " NAME : type = "));
-            result.addElement(keywordSnippet("atomic",  "<type> name = "));
+            result.addElement(keywordSnippet("atomic", "<type> name = "));
+            result.addElement(keywordSnippet("atomic (^)", "<type> ^name = "));
             result.addElement(keywordSnippet("volatile", " name = "));
             result.addElement(keywordSnippet("return",  " "));
             result.addElement(keywordSnippet("throw",   " "));

@@ -161,6 +161,7 @@ public class LarvLexer extends LexerBase {
             case '|':
                 if (next == '|') { tokenEnd = pos + 1; return LarvTokenTypes.OR; }
                 tokenEnd = pos; return LarvTokenTypes.BAD_CHAR;
+            case '^':  tokenEnd = pos; return LarvTokenTypes.CARET;
             default:
                 tokenEnd = pos;
                 return LarvTokenTypes.BAD_CHAR;

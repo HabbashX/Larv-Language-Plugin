@@ -114,6 +114,7 @@ public final class LarvTokenTypes {
     public static final IElementType SEMICOLON = t("SEMICOLON");
     public static final IElementType COLON     = t("COLON");
     public static final IElementType DOT       = t("DOT");
+    public static final IElementType CARET     = t("CARET");
 
     public static final IElementType COMMENT  = t("COMMENT");
     public static final IElementType BAD_CHAR = t("BAD_CHAR");
@@ -136,7 +137,8 @@ public final class LarvTokenTypes {
     public static final TokenSet OPERATORS = TokenSet.create(
             PLUS, MINUS, STAR, SLASH, PLUS_PLUS, MINUS_MINUS,
             EQUAL, PLUS_EQUAL, MINUS_EQUAL, STAR_EQUAL, SLASH_EQUAL,
-            EQEQ, NOTEQ, LT, GT, LTE, GTE, AND, OR, BANG, QUESTION
+            EQEQ, NOTEQ, LT, GT, LTE, GTE, AND, OR, BANG, QUESTION,
+            CARET
     );
 
     public static final TokenSet BRACES    = TokenSet.create(LBRACE, RBRACE);
